@@ -1,3 +1,165 @@
+
+import streamlit as st
+import requests
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import json
+
+# Load configuration from config file
+with open("config.json", "r") as config_file:
+    config = json.load(config_file)
+
+# Constants
+DEXSCREENER_API_URL = config["dex_api_url"]
+DATABASE_NAME = config["database_name"]
+TELEGRAM_BOT_TOKEN = config["telegram_bot_token"]
+BONKBOT_API_URL = "https://api.bonkbot.com/trade"
+BONKBOT_API_KEY = config["bonkbot_api_key"]
+
+# Initialize Streamlit app
+st.title("🚀 Crypto Trading Bot Dashboard")
+
+# Sidebar for settings
+st.sidebar.header("Settings")
+update_interval = st.sidebar.slider("Update Interval (seconds)", 60, 600, 300)
+min_liquidity = st.sidebar.number_input("Minimum Liquidity", value=10000)
+max_liquidity = st.sidebar.number_input("Maximum Liquidity", value=1000000)
+min_market_cap = st.sidebar.number_input("Minimum Market Cap", value=50000)
+max_market_cap = st.sidebar.number_input("Maximum Market Cap", value=10000000)
+
+# Blacklist management
+st.sidebar.header("Blacklist Management")
+coin_blacklist = st.sidebar.text_area("Coin Blacklist (one per line)", value="\n".join(config["blacklist"]["coins"]))
+dev_blacklist = st.sidebar.text_area("Dev Blacklist (one per line)", value="\n".join(config["blacklist"]["devs"]))
+
+# Save blacklists to config
+if st.sidebar.button("Update Blacklists"):
+    config["blacklist"]["coins"] = coin_blacklist.split("\n")
+    config["blacklist"]["devs"] = dev_blacklist.split("\n")
+    with open("config.json", "w") as config_file:
+        json.dump(config, config_file)
+    st.sidebar.success("Blacklists updated!")
+
+# Connect to SQLite database
+def init_db():
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tokens (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            symbol TEXT,
+            price_usd REAL,
+            market_cap REAL,
+            liquidity REAL,
+            volume_24h REAL,
+            is_cex_listed INTEGER,
+            is_tier1 INTEGER,
+            is_rugged INTEGER,
+            is_pumped INTEGER,
+            dev_address TEXT,
+            is_fake_volume INTEGER,
+            is_bundled_supply INTEGER,
+            rugcheck_status TEXT,
+            timestamp DATETIME
+        )
+    ''')
+    conn.commit()
+    return conn
+
+# Fetch token data from DexScreener
+def fetch_token_data(token_address):
+    url = f"{DEXSCREENER_API_URL}{token_address}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Failed to fetch data for token: {token_address}")
+        return None
+
+# Execute trade via BonkBot
+def execute_trade(token_address, action):
+    headers = {"Authorization": f"Bearer {BONKBOT_API_KEY}"}
+    payload = {
+        "token_address": token_address,
+        "action": action  # "buy" or "sell"
+    }
+    response = requests.post(BONKBOT_API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        return True
+    else:
+        st.error(f"Failed to execute {action} for token {token_address}.")
+        return False
+
+# Send Telegram notification
+def send_telegram_notification(message):
+    chat_id = config["telegram_chat_id"]
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code != 200:
+        st.error("Failed to send Telegram notification.")
+
+# Main app
+def main():
+    conn = init_db()
+
+    # Token monitoring
+    st.header("📊 Token Monitoring")
+    token_addresses = st.text_area("Enter Token Addresses (one per line)", value="\n".join(["TOKEN_ADDRESS_1", "TOKEN_ADDRESS_2"]))
+    token_addresses = token_addresses.split("\n")
+
+    if st.button("Fetch Token Data"):
+        for address in token_addresses:
+            token_data = fetch_token_data(address)
+            if token_data:
+                st.write(f"**Token:** {token_data['pair']['baseToken']['name']} ({token_data['pair']['baseToken']['symbol']})")
+                st.write(f"**Price (USD):** ${token_data['pair']['priceUsd']}")
+                st.write(f"**Market Cap:** ${token_data['pair']['marketCap']}")
+                st.write(f"**Liquidity:** ${token_data['pair']['liquidity']['usd']}")
+                st.write("---")
+
+    # Trade execution
+    st.header("💹 Execute Trades")
+    trade_token_address = st.text_input("Enter Token Address for Trade")
+    trade_action = st.selectbox("Select Action", ["buy", "sell"])
+
+    if st.button("Execute Trade"):
+        if execute_trade(trade_token_address, trade_action):
+            st.success(f"Successfully executed {trade_action} for token {trade_token_address}.")
+            send_telegram_notification(f"✅ {trade_action.capitalize()} {trade_token_address} at {datetime.now()}.")
+
+    # View notifications
+    st.header("🔔 Notifications")
+    if st.button("View Latest Notifications"):
+        # Fetch notifications from Telegram (pseudo-code)
+        st.write("Latest Notifications:")
+        st.write("- Bought TOKEN_ADDRESS_1 at $0.50")
+        st.write("- Sold TOKEN_ADDRESS_2 at $1.00")
+
+    # View database
+    st.header("📂 Database")
+    if st.button("View Database"):
+        df = pd.read_sql_query("SELECT * FROM tokens", conn)
+        st.dataframe(df)
+
+# Run the app
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
 import datetime
 import random
 
